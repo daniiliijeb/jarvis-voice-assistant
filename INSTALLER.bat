@@ -35,26 +35,103 @@ echo   [STEP 1/6] Checking Python 3.11
 echo ================================================================
 echo.
 
+REM Try different ways to find Python
+set "PYTHON_FOUND=0"
+set "PYTHON_CMD="
+set "PYTHON_VERSION="
+
+REM Method 1: py launcher with version
 py -3.11 -V >nul 2>&1
-if errorlevel 1 (
-    echo   [X] Python 3.11 not found
+if not errorlevel 1 (
+    set "PYTHON_FOUND=1"
+    set "PYTHON_CMD=py -3.11"
+    py -3.11 -V
+    goto :python_found
+)
+
+REM Method 2: py launcher without version
+py -V >nul 2>&1
+if not errorlevel 1 (
+    for /f "tokens=2" %%i in ('py -V 2^>^&1') do set PYTHON_VERSION=%%i
+    echo   [~] Found Python via py launcher: !PYTHON_VERSION!
+    echo   [~] Checking if version is 3.11 or higher...
+    REM Check for 3.11, 3.12, 3.13, etc.
+    echo !PYTHON_VERSION! | findstr /R "3\.1[1-9] 3\.[2-9]" >nul
+    if not errorlevel 1 (
+        set "PYTHON_FOUND=1"
+        set "PYTHON_CMD=py"
+        py -V
+        goto :python_found
+    )
+)
+
+REM Method 3: python command
+python --version >nul 2>&1
+if not errorlevel 1 (
+    for /f "tokens=2" %%i in ('python --version 2^>^&1') do set PYTHON_VERSION=%%i
+    echo   [~] Found Python via python command: !PYTHON_VERSION!
+    echo !PYTHON_VERSION! | findstr /R "3\.1[1-9] 3\.[2-9]" >nul
+    if not errorlevel 1 (
+        set "PYTHON_FOUND=1"
+        set "PYTHON_CMD=python"
+        python --version
+        goto :python_found
+    )
+)
+
+REM Method 4: python3 command
+python3 --version >nul 2>&1
+if not errorlevel 1 (
+    for /f "tokens=2" %%i in ('python3 --version 2^>^&1') do set PYTHON_VERSION=%%i
+    echo   [~] Found Python via python3 command: !PYTHON_VERSION!
+    echo !PYTHON_VERSION! | findstr /R "3\.1[1-9] 3\.[2-9]" >nul
+    if not errorlevel 1 (
+        set "PYTHON_FOUND=1"
+        set "PYTHON_CMD=python3"
+        python3 --version
+        goto :python_found
+    )
+)
+
+REM Method 5: Check common installation paths
+if exist "%LOCALAPPDATA%\Programs\Python\Python311\python.exe" (
+    set "PYTHON_FOUND=1"
+    set "PYTHON_CMD=%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
+    "%PYTHON_CMD%" --version
+    set "PATH=%LOCALAPPDATA%\Programs\Python\Python311;%LOCALAPPDATA%\Programs\Python\Python311\Scripts;%PATH%"
+    goto :python_found
+)
+
+if exist "%ProgramFiles%\Python311\python.exe" (
+    set "PYTHON_FOUND=1"
+    set "PYTHON_CMD=%ProgramFiles%\Python311\python.exe"
+    "%PYTHON_CMD%" --version
+    set "PATH=%ProgramFiles%\Python311;%ProgramFiles%\Python311\Scripts;%PATH%"
+    goto :python_found
+)
+
+REM Python not found, try to download
+if !PYTHON_FOUND! EQU 0 (
+    echo   [X] Python 3.11+ not found
     echo.
-    echo   Downloading Python 3.11.9 installer...
+    echo   Attempting to download Python 3.11.9 installer...
     echo   [                    ] 0%%
     
     set "PYTHON_URL=https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe"
     set "PYTHON_INSTALLER=%TEMP%\python-3.11.9-installer.exe"
     
-    powershell -Command "$ProgressPreference = 'SilentlyContinue'; try { Invoke-WebRequest -Uri '%PYTHON_URL%' -OutFile '%PYTHON_INSTALLER%' -UseBasicParsing } catch { Write-Host 'Error'; exit 1 }"
+    powershell -Command "$ProgressPreference = 'SilentlyContinue'; try { $ErrorActionPreference = 'Stop'; Invoke-WebRequest -Uri '%PYTHON_URL%' -OutFile '%PYTHON_INSTALLER%' -UseBasicParsing -TimeoutSec 30 } catch { Write-Host 'Download failed: ' $_.Exception.Message; exit 1 }"
     
     if not exist "%PYTHON_INSTALLER%" (
         color 0C
         echo   [X] ERROR: Failed to download Python
         echo.
-        echo   Please install Python 3.11 manually:
+        echo   Please install Python 3.11+ manually:
         echo   https://www.python.org/downloads/
         echo.
         echo   IMPORTANT: Select "Add Python to PATH" during installation
+        echo.
+        echo   After installation, run this installer again.
         echo.
         pause
         exit /b 1
@@ -72,12 +149,28 @@ if errorlevel 1 (
     
     timeout /t 5 /nobreak >nul
     
+    REM Update PATH in current session
     set "PATH=%PATH%;%LOCALAPPDATA%\Programs\Python\Python311;%LOCALAPPDATA%\Programs\Python\Python311\Scripts"
     set "PATH=%PATH%;%ProgramFiles%\Python311;%ProgramFiles%\Python311\Scripts"
     set "PATH=%PATH%;%LOCALAPPDATA%\Programs\Python\Python311-32;%LOCALAPPDATA%\Programs\Python\Python311-32\Scripts"
     
+    REM Try to find Python after installation
     py -3.11 -V >nul 2>&1
     if errorlevel 1 (
+        py -V >nul 2>&1
+        if not errorlevel 1 (
+            set "PYTHON_CMD=py"
+            goto :python_found
+        )
+        python --version >nul 2>&1
+        if not errorlevel 1 (
+            set "PYTHON_CMD=python"
+            goto :python_found
+        )
+        if exist "%LOCALAPPDATA%\Programs\Python\Python311\python.exe" (
+            set "PYTHON_CMD=%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
+            goto :python_found
+        )
         color 0C
         echo   [X] Python not found after installation
         echo.
@@ -88,11 +181,28 @@ if errorlevel 1 (
         exit /b 1
     )
     
+    set "PYTHON_CMD=py -3.11"
     color 0A
     echo   [OK] Python 3.11 installed successfully!
-) else (
-    echo   [OK] Python 3.11 found
+    goto :python_found
+)
+
+:python_found
+REM Python found, continue with installation
+if "!PYTHON_CMD!"=="" (
+    set "PYTHON_CMD=py -3.11"
+)
+echo   [OK] Python found: !PYTHON_CMD!
+if "!PYTHON_CMD!"=="py -3.11" (
     py -3.11 -V
+) else if "!PYTHON_CMD!"=="py" (
+    py -V
+) else if "!PYTHON_CMD!"=="python" (
+    python --version
+) else if "!PYTHON_CMD!"=="python3" (
+    python3 --version
+) else (
+    "!PYTHON_CMD!" --version
 )
 
 REM ========================================
@@ -109,17 +219,18 @@ if exist .venv (
     if not exist .venv\Scripts\python.exe (
         echo   [~] Environment is corrupted, recreating...
         rmdir /s /q .venv
-        py -3.11 -m venv .venv
+        !PYTHON_CMD! -m venv .venv
     ) else (
         echo   [OK] Virtual environment is OK
     )
 ) else (
     echo   [~] Creating virtual environment...
     echo   [                    ] 0%%
-    py -3.11 -m venv .venv
+    !PYTHON_CMD! -m venv .venv
     if errorlevel 1 (
         color 0C
         echo   [X] ERROR: Failed to create virtual environment
+        echo   Python command used: !PYTHON_CMD!
         pause
         exit /b 1
     )

@@ -14,6 +14,7 @@ from jarvis.memory.memory import SimpleMemory
 from jarvis.core.performance import PerformanceStats, timer
 from pathlib import Path
 import json
+import time
 
 
 @dataclass
@@ -28,6 +29,8 @@ class Conversation:
     def __post_init__(self) -> None:
         # Инициализация основных компонентов диалога
         self.listener = SpeechListener(config=RecordConfig())
+        self._last_tts_time = 0  # Время последнего TTS для фильтрации
+        self._last_command = ""  # Последняя выполненная команда для фильтрации повторов
         # Используем STT из runtime если передан, иначе создаём свой (Google по умолчанию)
         if self.stt_external is not None:
             self.stt = self.stt_external
@@ -79,6 +82,51 @@ class Conversation:
                 if not text:
                     self.logger.debug("Текст не распознан.")
                     continue
+                
+                # Фильтрация: игнорируем текст, который похож на ответы Jarvis или повтор команды
+                text_lower = text.lower().strip()
+                time_since_tts = time.time() - self._last_tts_time if hasattr(self, '_last_tts_time') else 999
+                
+                # Список слов, которые указывают на ответ Jarvis
+                jarvis_response_words = [
+                    "открываю", "запускаю", "закрываю", "включаю", "выключаю",
+                    "готово", "выполнено", "сделано", "приятного просмотра"
+                ]
+                
+                # Проверка 1: Игнорируем команды в течение 5 секунд после TTS, если они содержат слова из ответов Jarvis
+                if time_since_tts < 5.0:
+                    if any(word in text_lower for word in jarvis_response_words):
+                        self.logger.debug(f"Conversation: Игнорирую распознанный текст (содержит слова ответа Jarvis, время после TTS: {time_since_tts:.1f}с): '{text}'")
+                        continue
+                    
+                    # Проверка 2: Игнорируем команды, которые заканчиваются на "сэр" и были распознаны сразу после TTS
+                    if text_lower.endswith("сэр") or " сэр" in text_lower:
+                        self.logger.debug(f"Conversation: Игнорирую распознанный текст (заканчивается на 'сэр', время после TTS: {time_since_tts:.1f}с): '{text}'")
+                        continue
+                    
+                    # Проверка 3: Игнорируем повтор последней команды в течение 5 секунд
+                    if hasattr(self, '_last_command') and self._last_command:
+                        # Нормализуем команды для сравнения (убираем "сэр" и лишние слова)
+                        normalized_text = text_lower.replace(" сэр", "").replace("сэр", "").strip()
+                        normalized_last = self._last_command.lower().replace(" сэр", "").replace("сэр", "").strip()
+                        
+                        # Проверяем похожесть команд (если содержат одинаковые ключевые слова)
+                        text_words = set(normalized_text.split())
+                        last_words = set(normalized_last.split())
+                        common_words = text_words & last_words
+                        
+                        # Если есть общие значимые слова (не предлоги/местоимения)
+                        significant_words = {"браузер", "youtube", "калькулятор", "открой", "открывай", "запускай", "запусти"}
+                        if common_words & significant_words:
+                            self.logger.debug(f"Conversation: Игнорирую распознанный текст (повтор команды, время после TTS: {time_since_tts:.1f}с): '{text}'")
+                            continue
+                
+                # Проверка 4: Игнорируем, если TTS говорит прямо сейчас
+                if self.tts.is_speaking():
+                    if any(word in text_lower for word in jarvis_response_words) or text_lower.endswith("сэр"):
+                        self.logger.debug(f"Conversation: Игнорирую распознанный текст (TTS говорит сейчас): '{text}'")
+                        continue
+                
                 self.logger.info(f"Conversation: Распознано: '{text}'")
                 self.memory.add_user(text)
                 total_messages = len(self.memory.user_history) + len(self.memory.assistant_history)
@@ -98,6 +146,7 @@ class Conversation:
                             quick_response = "Да, сэр."
                             # Используем асинхронное озвучивание - не блокируем цикл
                             self.tts.speak_async(quick_response)
+                            self._last_tts_time = time.time()  # Запоминаем время TTS
                             self.logger.debug("Conversation: Быстрый ответ запущен асинхронно")
                         except Exception as e:
                             self.logger.warning(f"Ошибка TTS: {e}")
@@ -121,6 +170,8 @@ class Conversation:
                     else:
                         self.logger.info(f"Conversation: Команда извлечена из фразы: '{cmd_text}'")
                     self.logger.info(f"Conversation: Выполняю команду: '{cmd_text}'")
+                    # Сохраняем последнюю команду для фильтрации повторов
+                    self._last_command = cmd_text
                     try:
                         if self.config.profile:
                             with timer("command_ms", lambda n, d: self._on_perf(n, d)):
@@ -140,12 +191,15 @@ class Conversation:
                             # Используем асинхронное озвучивание - не блокируем цикл
                             # Jarvis продолжит слушать команды во время воспроизведения
                             self.tts.speak_async(response)
+                            self._last_tts_time = time.time()  # Запоминаем время TTS
                             self.logger.debug("Conversation: Асинхронное озвучивание запущено, продолжаю слушать команды")
                         except Exception as e:
                             self.logger.error(f"Conversation: Ошибка TTS при озвучивании ответа: {e}", exc_info=True)
                 else:
                     # Если нет wake word, но есть команда - выполняем напрямую
                     self.logger.debug(f"Conversation: Wake word не обнаружен, пробую выполнить команду напрямую: '{text}'")
+                    # Сохраняем последнюю команду для фильтрации повторов
+                    self._last_command = text
                     try:
                         response = self.router.handle(text)
                         if response:
@@ -155,6 +209,7 @@ class Conversation:
                                 self.logger.debug("Conversation: Начинаю асинхронное озвучивание ответа...")
                                 # Используем асинхронное озвучивание - не блокируем цикл
                                 self.tts.speak_async(response)
+                                self._last_tts_time = time.time()  # Запоминаем время TTS
                                 self.logger.debug("Conversation: Асинхронное озвучивание запущено, продолжаю слушать команды")
                             except Exception as e:
                                 self.logger.error(f"Conversation: Ошибка TTS при озвучивании: {e}", exc_info=True)

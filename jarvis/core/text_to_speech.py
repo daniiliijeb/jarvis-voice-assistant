@@ -224,10 +224,12 @@ class TextToSpeech:
             # Устанавливаем флаг остановки
             self._stop_event.set()
             # Ждём завершения потока (с таймаутом)
-            self._current_thread.join(timeout=0.5)
-            if self._current_thread.is_alive():
-                self._logger.warning("TTS: Поток не завершился в течение таймаута")
+            if self._current_thread:
+                self._current_thread.join(timeout=0.5)
+                if self._current_thread.is_alive():
+                    self._logger.warning("TTS: Поток не завершился в течение таймаута")
             self._stop_event.clear()
+            self._current_thread = None
             self._logger.debug("TTS: Воспроизведение остановлено")
     
     def is_speaking(self) -> bool:

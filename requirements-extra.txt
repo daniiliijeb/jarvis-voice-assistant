@@ -1,0 +1,7 @@
+vosk==0.3.45
+openai-whisper==20240930
+chromadb==0.5.11
+
+
+
+

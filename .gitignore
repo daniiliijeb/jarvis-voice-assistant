@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+*.egg-info/
+dist/
+build/
+*.spec
+
+# Логи
+jarvis/logs/*.log
+jarvis/logs/*.json
+!jarvis/logs/.gitkeep
+
+# Данные (не коммитим API ключи и личные данные)
+jarvis/data/elevenlabs_api_key.txt
+jarvis/data/elevenlabs_voice_id.txt
+jarvis/data/last_healthcheck.txt
+
+# Временные файлы
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Windows
+*.exe
+*.msi
+python-*.exe
+
+# Модели Whisper (слишком большие для GitHub)
+*.pt
+*.bin
+models/
+.cache/
+
+# Tools (не коммитим большие файлы)
+tools/ffmpeg/
+tools/*.zip
+
+# Установщики
+python-installer.exe
+
+# Тестовые файлы
+test_*.py
+*_test.py
